@@ -37,6 +37,14 @@ public class ServiceTransaction implements Closeable {
         this.adapter = adapter;
         this.state = State.ACTIVE;
     }
+
+    public void addListener(ServiceTransactionListener listener) {
+        this.group.addListener(listener);
+    }
+
+    public void removeListener(ServiceTransactionListener listener) {
+        this.group.removeListener(listener);
+    }
     
     String getIdempotency() {
         return idempotency;
@@ -84,6 +92,7 @@ public class ServiceTransaction implements Closeable {
             this.realRollback();
         }
         finally {
+            // always rollback the group, even if the realRollback has an exception
             this.group.rollback(this.index);
         }
     }
@@ -117,7 +126,12 @@ public class ServiceTransaction implements Closeable {
         
         try {
             this.adapter.rollback();
-        } finally {
+        }
+        catch (Throwable e) {
+            this.cause = e;
+            throw e;
+        }
+        finally {
             this.state = State.ROLLBACK;
         }
     }
@@ -135,7 +149,9 @@ public class ServiceTransaction implements Closeable {
         try {
             this.adapter.commit();
             this.state = State.COMMITTED;
-        } catch (Exception e) {
+        }
+        catch (Throwable e) {
+            this.cause = e;
             // if a commit fails, its implied it was already rolled back
             this.state = State.ROLLBACK;
             throw e;

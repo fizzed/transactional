@@ -13,6 +13,8 @@ public class ServiceTransactionGroup {
     private final long id;
     private final StopWatch timer;
     private final List<ServiceTransaction> transactions;
+    private boolean success;
+    private List<ServiceTransactionListener> listeners;
     
     public ServiceTransactionGroup(long id) {
         this.id = id;
@@ -28,8 +30,32 @@ public class ServiceTransactionGroup {
         return timer;
     }
     
+    public boolean isCompleted() {
+        return this.timer.isStopped();
+    }
+    
+    public boolean wasSuccessful() {
+        return this.isCompleted() && this.success;
+    }
+    
     public boolean hasTransactions() {
         return this.transactions != null && !this.transactions.isEmpty();
+    }
+    
+    public void addListener(ServiceTransactionListener listener) {
+        if (this.listeners == null) {
+            this.listeners = new ArrayList<>();
+        }
+        this.listeners.add(listener);
+    }
+    
+    public void removeListener(ServiceTransactionListener listener) {
+        if (this.listeners != null) {
+            this.listeners.remove(listener);
+            if (this.listeners.isEmpty()) {
+                this.listeners = null;
+            }
+        }
     }
     
     public ServiceTransaction begin(
@@ -57,6 +83,39 @@ public class ServiceTransactionGroup {
         return transaction;
     }
     
+    private void complete(boolean success) {
+        
+        final boolean isFirstComplete = this.timer.isRunning();
+        
+        this.success = success;
+        
+        this.timer.stop();
+        
+        // the current transaction MUST be completed
+        ServiceTransactions.clear();
+        
+        log.debug("Transaction complete: group={} (in {})", this.id, this.timer);
+        
+        if (isFirstComplete && this.listeners != null) {
+            for (ServiceTransactionListener listener : this.listeners) {
+                try {
+                    listener.onComplete(success);
+                }
+                catch (Throwable t) {
+                    log.error("Unhandled throwable in transaction listener.onComplete!", t);
+                }
+            }
+        }
+        
+        // re-throw the most inner-most cause
+        for (int i = this.transactions.size() - 1; i >= 0; i--) {
+            ServiceTransaction tr = this.transactions.get(i);
+            if (tr.getCause() != null) {
+                throw new ServiceTransactionException("Unable to cleanly execute transaction group=" + this.getId(), tr.getCause());
+            }
+        }
+    }
+    
     void commit(int index) {
         // first transaction only triggers final commit
         if (index > 0) {
@@ -64,6 +123,8 @@ public class ServiceTransactionGroup {
         }
         
         log.debug("Transaction commit: group={}", this.id);
+        
+        boolean rollback = false;
         
         try {
             // verify all transactions are ready to commit
@@ -81,35 +142,34 @@ public class ServiceTransactionGroup {
                 return;
             }
 
-    //        int commits = 0;
-    //        int rollbacks = 0;
-            boolean rollback = false;
-
             for (int i = this.transactions.size() - 1; i >= 0; i--) {
                 ServiceTransaction tr = this.transactions.get(i);
                 if (rollback) {
-                    log.debug("Transaction real rollback: group={}, index={} ({})",
+                    try {
+                        log.debug("Transaction real rollback: group={}, index={} ({})",
                             this.id, tr.getIndex(), tr.getDescriptor());
-                    tr.realRollback();
-    //                rollbacks++;
+                        
+                        tr.realRollback();
+                    }
+                    catch (Exception e) {
+                        log.warn("Unable to rollback (will continue rolling back rest of transaction group): {}", e.getMessage());
+                    }
                 }
                 else {
                     try {
                         log.debug("Transaction real commit: group={}, index={} ({})",
                             this.id, tr.getIndex(), tr.getDescriptor());
+                        
                         tr.realCommit();
-    //                    commits++;
                     } catch (Exception e) {
-                        log.warn("Unable to commit (will rollback rest of transaction group)", e);
+                        log.warn("Unable to commit (will rollback rest of transaction group): {}", e.getMessage());
                         rollback = true;
-    //                    rollbacks++;
                     }
                 }
             }
         }
         finally {
-            // the current transaction MUST be completed
-            ServiceTransactions.clear();
+            this.complete(!rollback);
         }
     }
     
@@ -134,7 +194,7 @@ public class ServiceTransactionGroup {
             }
         }
         finally {
-            ServiceTransactions.clear();
+            this.complete(false);
         }
     }
     

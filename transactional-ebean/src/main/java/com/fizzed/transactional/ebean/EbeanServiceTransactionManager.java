@@ -15,11 +15,11 @@ public class EbeanServiceTransactionManager {
         this.ebean = ebean;
     }
 
-    public Function<Boolean,ServiceTransactionAdapter> build() {
-        return this.build(TxIsolation.READ_COMMITED);
+    public Function<Boolean,ServiceTransactionAdapter> supplier() {
+        return this.supplier(TxIsolation.READ_COMMITED);
     }
     
-    public Function<Boolean,ServiceTransactionAdapter> build(TxIsolation isolation) {
+    public Function<Boolean,ServiceTransactionAdapter> supplier(TxIsolation isolation) {
         return (first) -> {
             // only the first transaction can do real begin, rollback, and commit
             if (!first) {
