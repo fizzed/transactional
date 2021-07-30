@@ -43,10 +43,16 @@ public class ServiceTransactionGroup {
     }
     
     public void addListener(ServiceTransactionListener listener) {
-        if (this.listeners == null) {
-            this.listeners = new ArrayList<>();
+        // if the group is already completed, we can run the listener now
+        if (this.isCompleted()) {
+            listener.onComplete(this.success);
         }
-        this.listeners.add(listener);
+        else {
+            if (this.listeners == null) {
+                this.listeners = new ArrayList<>();
+            }
+            this.listeners.add(listener);
+        }
     }
     
     public void removeListener(ServiceTransactionListener listener) {

@@ -1,6 +1,7 @@
 package com.fizzed.transactional;
 
 import com.fizzed.transactional.ServiceTransaction.State;
+import java.util.concurrent.atomic.AtomicBoolean;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -129,6 +130,90 @@ public class ServiceTransactionsTest {
     }
     
     @Test
+    public void oneLevelCommitTriggersListenerOnEnd() {
+        
+        final ServiceTransactionAdapter adapter1 = spy(new ServiceTransactionNoopAdapter());
+        final ServiceTransactionListener listener1 = spy(new ServiceTransactionListener() {
+            @Override
+            public void onComplete(boolean success) {
+                System.out.println("onComplete called!");
+            }
+        });
+        
+        final ServiceTransaction str1 = ServiceTransactions.begin("test1", (b) -> adapter1);
+        
+        assertThat(ServiceTransactions.isActive(), is(true));
+        
+        str1.commit();
+        
+        str1.addListener(listener1);
+        
+        str1.end();
+        
+        assertThat(str1.getGroup().isCompleted(), is(true));
+        assertThat(str1.getGroup().wasSuccessful(), is(true));
+        verify(adapter1, times(1)).commit();
+        verify(adapter1, times(0)).rollback();
+        verify(listener1, times(1)).onComplete(anyBoolean());
+        assertThat(ServiceTransactions.isActive(), is(false));
+    }
+    
+    @Test
+    public void oneLevelCommitTriggersOnSuccess() {
+        
+        final ServiceTransactionAdapter adapter1 = spy(new ServiceTransactionNoopAdapter());
+        final Runnable listener1 = spy(new Runnable() {
+            @Override
+            public void run() {
+                System.out.println("onComplete called!");
+            }
+        });
+        
+        final ServiceTransaction str1 = ServiceTransactions.begin("test1", (b) -> adapter1);
+        
+        assertThat(ServiceTransactions.isActive(), is(true));
+        
+        str1.onSuccess(listener1);
+        
+        str1.commit();
+        str1.end();
+        
+        assertThat(str1.getGroup().isCompleted(), is(true));
+        assertThat(str1.getGroup().wasSuccessful(), is(true));
+        verify(adapter1, times(1)).commit();
+        verify(adapter1, times(0)).rollback();
+        verify(listener1, times(1)).run();
+        assertThat(ServiceTransactions.isActive(), is(false));
+    }
+    
+    @Test
+    public void oneLevelRollbackNotTriggersOnSuccess() {
+        
+        final ServiceTransactionAdapter adapter1 = spy(new ServiceTransactionNoopAdapter());
+        final Runnable listener1 = spy(new Runnable() {
+            @Override
+            public void run() {
+                System.out.println("onComplete called!");
+            }
+        });
+        
+        final ServiceTransaction str1 = ServiceTransactions.begin("test1", (b) -> adapter1);
+        
+        assertThat(ServiceTransactions.isActive(), is(true));
+        
+        str1.onSuccess(listener1);
+
+        str1.end();
+        
+        assertThat(str1.getGroup().isCompleted(), is(true));
+        assertThat(str1.getGroup().wasSuccessful(), is(false));
+        verify(adapter1, times(0)).commit();
+        verify(adapter1, times(1)).rollback();
+        verify(listener1, times(0)).run();
+        assertThat(ServiceTransactions.isActive(), is(false));
+    }
+    
+    @Test
     public void twoLevelCommit() {
         
         final ServiceTransactionAdapter adapter1 = spy(new ServiceTransactionNoopAdapter());
@@ -203,6 +288,67 @@ public class ServiceTransactionsTest {
         assertThat(str1.getGroup().wasSuccessful(), is(true));
         verify(adapter2, times(1)).commit();
         verify(adapter2, times(0)).rollback();
+        verify(listener2, times(1)).onComplete(anyBoolean());
+        verify(adapter1, times(1)).commit();
+        verify(adapter1, times(0)).rollback();
+        assertThat(ServiceTransactions.isActive(), is(false));
+    }
+    
+    @Test
+    public void twoLevelCommitTriggersListenerAtEnd() {
+        
+        final ServiceTransactionAdapter adapter1 = spy(new ServiceTransactionNoopAdapter());
+        
+        final ServiceTransaction str1 = ServiceTransactions.begin("test1", (b) -> adapter1);
+        
+        final ServiceTransactionListener listener1 = spy(new ServiceTransactionListener() {
+            @Override
+            public void onComplete(boolean success) {
+                System.out.println("onComplete called!");
+            }
+        });
+        
+        assertThat(ServiceTransactions.isActive(), is(true));
+        
+        
+        final ServiceTransactionAdapter adapter2 = spy(new ServiceTransactionNoopAdapter());
+        
+        final ServiceTransaction str2 = ServiceTransactions.begin("test2", (b) -> adapter2);
+        
+        final ServiceTransactionListener listener2 = spy(new ServiceTransactionListener() {
+            @Override
+            public void onComplete(boolean success) {
+                System.out.println("onComplete called!");
+            }
+        });
+        
+        assertThat(ServiceTransactions.isActive(), is(true));
+        
+        str2.commit();
+        
+        str2.addListener(listener2);
+        
+        // should NOT be called yet in the addListener method
+        verify(listener2, times(0)).onComplete(anyBoolean());
+        
+        
+        str2.end();
+        
+        // the commit did not really happen yet
+        verify(adapter2, times(0)).commit();
+        verify(listener2, times(0)).onComplete(anyBoolean());
+        
+        str1.commit();
+        
+        str1.addListener(listener1);
+        
+        str1.end();
+        
+        assertThat(str1.getGroup().isCompleted(), is(true));
+        assertThat(str1.getGroup().wasSuccessful(), is(true));
+        verify(adapter2, times(1)).commit();
+        verify(adapter2, times(0)).rollback();
+        verify(listener1, times(1)).onComplete(anyBoolean());
         verify(listener2, times(1)).onComplete(anyBoolean());
         verify(adapter1, times(1)).commit();
         verify(adapter1, times(0)).rollback();

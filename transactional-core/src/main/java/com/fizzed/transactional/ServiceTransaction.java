@@ -2,6 +2,7 @@ package com.fizzed.transactional;
 
 import static com.fizzed.crux.util.MoreObjects.in;
 import java.io.Closeable;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -39,11 +40,25 @@ public class ServiceTransaction implements Closeable {
     }
 
     public void addListener(ServiceTransactionListener listener) {
+        Objects.requireNonNull(listener, "listener was null");
         this.group.addListener(listener);
     }
 
     public void removeListener(ServiceTransactionListener listener) {
+        Objects.requireNonNull(listener, "listener was null");
         this.group.removeListener(listener);
+    }
+    
+    public void onSuccess(Runnable runnable) {
+        Objects.requireNonNull(runnable, "runnable was null");
+        this.addListener(new ServiceTransactionListener() {
+            @Override
+            public void onComplete(boolean success) {
+                if (success) {
+                    runnable.run();
+                }
+            }
+        });
     }
     
     String getIdempotency() {
